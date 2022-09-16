@@ -22,23 +22,37 @@ private:
     bool bStopped;
 };
 
-ThreadPool::ThreadPool(unsigned int threads):bStopped(true)
+ThreadPool::ThreadPool(unsigned int threads):bStopped(false)
 {
     for(size_t i = 0;i<threads;++i)
         workers.emplace_back([this] { process();} );
 }
 void ThreadPool::process()
 {
-    for(;;)
+    //for(;;)
+    //{
+    //    if(bStopped)
+    //        continue;
+    //    std::function<void()> task;
+    //    std::unique_lock<std::mutex> lock(queueMutex);
+    //    condition.wait(lock, [this]{ return bStopped || !tasks.empty(); });
+    //    task = std::move(tasks.front());
+    //    tasks.pop();
+    //    task();
+    //}
+    while(!bStopped)
     {
-        if(bStopped)
-            continue;
-        std::function<void()> task;
         std::unique_lock<std::mutex> lock(queueMutex);
+
         condition.wait(lock, [this]{ return bStopped || !tasks.empty(); });
-        task = std::move(tasks.front());
-        tasks.pop();
-        task();
+        if(!tasks.empty())
+        {
+            std::function<void()> task = std::move(tasks.front());
+            tasks.pop();
+            task();
+
+        }
+
     }
 
 }
@@ -57,14 +71,12 @@ void ThreadPool::stop()
 
 template<class F, class... Args> auto ThreadPool::add(F&& f, Args&&... args) -> std::future<typename std::result_of<F(Args...)>::type>
 {
-    using return_type = typename std::result_of<F(Args...)>::type;
-    auto task = std::make_shared< std::packaged_task<return_type()>>(std::bind(std::forward<F>(f), std::forward<Args>(args)...));
-    std::future<return_type> res = task->get_future();
-
+    using returnType = typename std::result_of<F(Args...)>::type;
+    auto task = std::make_shared< std::packaged_task<returnType()>>(std::bind(std::forward<F>(f), std::forward<Args>(args)...));
+    std::future<returnType> res = task->get_future();
     std::unique_lock<std::mutex> lock(queueMutex);
 
     tasks.emplace([task](){ (*task)(); });
-
     condition.notify_one();
     return res;
 }
